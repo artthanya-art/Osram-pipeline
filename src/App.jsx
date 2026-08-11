@@ -502,25 +502,26 @@ export default function App() {
     if (!file) return;
     const isExcel = /\.(xlsx|xls)$/i.test(file.name);
     const userBySalesId = new Map(users.map((u) => [u.salesId.toLowerCase(), u]));
-    let reassignedCount = 0;
+    let unknownCount = 0;
     try {
       const rows = isExcel ? await parseExcelFile(file) : await parseCsvFile(file);
       if (!rows.length) { showToast("ไม่พบข้อมูลในไฟล์"); return; }
       const prepared = rows
         .map((r) => {
           const entry = mapRowToEntry(r);
-          // Never trust salesId/salesName straight from the file — old exports or the
-          // original Excel report may contain sales codes that no longer exist as
-          // registered accounts. Always resolve against real registered users instead,
-          // and fall back to whoever is doing the import if the code isn't recognized.
+          // Never trust salesName straight from the file — old exports or the original
+          // Excel report may contain sales codes tied to names that are outdated or don't
+          // match any registered account. Resolve the name against real registered users;
+          // if the code isn't registered (or missing), mark the row "Unknown" instead of
+          // silently attributing it to whoever happens to be doing the import.
           const matched = entry.salesId ? userBySalesId.get(entry.salesId.toLowerCase()) : null;
           if (matched) {
             entry.salesId = matched.salesId;
             entry.salesName = matched.name;
           } else {
-            if (entry.salesId) reassignedCount++;
-            entry.salesId = currentUser.salesId;
-            entry.salesName = currentUser.name;
+            entry.salesId = entry.salesId || "unknown";
+            entry.salesName = "Unknown";
+            unknownCount++;
           }
           if (!entry.grade) entry.grade = "C";
           if (!entry.progress) entry.progress = "0% - ยังไม่ได้เริ่มงาน";
@@ -535,8 +536,8 @@ export default function App() {
       const inserted = await bulkInsertEntries(prepared);
       setEntries((prev) => [...inserted, ...prev]);
       showToast(
-        reassignedCount > 0
-          ? `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ (${reassignedCount} รายการมีรหัสเซลที่ไม่ตรงกับบัญชีที่ลงทะเบียน จึงผูกกับ ${currentUser.name} แทน)`
+        unknownCount > 0
+          ? `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ (${unknownCount} รายการมีรหัสเซลที่ไม่ตรง/ไม่ได้ลงทะเบียน แสดงเป็น "Unknown")`
           : `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`
       );
     } catch (err) {
