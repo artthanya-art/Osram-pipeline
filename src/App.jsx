@@ -501,14 +501,27 @@ export default function App() {
   async function handleImportFile(file) {
     if (!file) return;
     const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+    const userBySalesId = new Map(users.map((u) => [u.salesId.toLowerCase(), u]));
+    let reassignedCount = 0;
     try {
       const rows = isExcel ? await parseExcelFile(file) : await parseCsvFile(file);
       if (!rows.length) { showToast("ไม่พบข้อมูลในไฟล์"); return; }
       const prepared = rows
         .map((r) => {
           const entry = mapRowToEntry(r);
-          if (!entry.salesId) entry.salesId = currentUser.salesId;
-          if (!entry.salesName) entry.salesName = currentUser.name;
+          // Never trust salesId/salesName straight from the file — old exports or the
+          // original Excel report may contain sales codes that no longer exist as
+          // registered accounts. Always resolve against real registered users instead,
+          // and fall back to whoever is doing the import if the code isn't recognized.
+          const matched = entry.salesId ? userBySalesId.get(entry.salesId.toLowerCase()) : null;
+          if (matched) {
+            entry.salesId = matched.salesId;
+            entry.salesName = matched.name;
+          } else {
+            if (entry.salesId) reassignedCount++;
+            entry.salesId = currentUser.salesId;
+            entry.salesName = currentUser.name;
+          }
           if (!entry.grade) entry.grade = "C";
           if (!entry.progress) entry.progress = "0% - ยังไม่ได้เริ่มงาน";
           if (!entry.zone) entry.zone = "Red Zone";
@@ -521,7 +534,11 @@ export default function App() {
       }
       const inserted = await bulkInsertEntries(prepared);
       setEntries((prev) => [...inserted, ...prev]);
-      showToast(`นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`);
+      showToast(
+        reassignedCount > 0
+          ? `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ (${reassignedCount} รายการมีรหัสเซลที่ไม่ตรงกับบัญชีที่ลงทะเบียน จึงผูกกับ ${currentUser.name} แทน)`
+          : `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`
+      );
     } catch (err) {
       showToast("นำเข้าข้อมูลไม่สำเร็จ: " + err.message);
     }
