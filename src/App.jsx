@@ -632,21 +632,21 @@ export default function App() {
   if (isAdmin) tabs.push({ id: "admin", label: `ผู้ดูแลระบบ${pendingUsers.length ? ` (${pendingUsers.length})` : ""}`, icon: ShieldCheck });
 
   return (
-    <div style={{ minHeight: "100vh", background: PAPER, fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: INK }}>
-      <div style={{ background: INK, color: "#fff", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: RED, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ minHeight: "100vh", background: PAPER, fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif", color: INK, overflowX: "hidden" }}>
+      <div style={{ background: INK, color: "#fff", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, position: "sticky", top: 0, zIndex: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: RED, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Lightbulb size={17} color={AMBER} />
           </div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 6 }}>
-              OSRAM Sales Pipeline {isAdmin && <Crown size={13} color={AMBER} />}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.1, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              OSRAM Sales Pipeline {isAdmin && <Crown size={13} color={AMBER} style={{ flexShrink: 0 }} />}
             </div>
-            <div style={{ fontSize: 11, color: "#A9A9B0" }}>{currentUser.name} · {currentUser.salesId} · {currentUser.zone}</div>
+            <div style={{ fontSize: 11, color: "#A9A9B0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentUser.name} · {currentUser.salesId} · {currentUser.zone}</div>
           </div>
         </div>
         <button onClick={handleLogout} style={{
-          background: "transparent", border: "1px solid #3B3B42", color: "#EDEDEF", borderRadius: 8,
+          background: "transparent", border: "1px solid #3B3B42", color: "#EDEDEF", borderRadius: 8, flexShrink: 0,
           padding: "8px 12px", fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontWeight: 600,
         }}><LogOut size={14} /> ออกจากระบบ</button>
       </div>
@@ -774,7 +774,7 @@ export default function App() {
             </div>
 
             {tab === "team" && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px,1fr))", gap: 14, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: 14, marginBottom: 20 }}>
                 <StatCard label="รายการทั้งหมด" value={teamStats.total} sub={`${teamStats.reps} พนักงานขาย · มูลค่ารวม ฿${money(teamStats.totalValue)}`} icon={Database} />
                 <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#8A8A90", marginBottom: 8 }}>สัดส่วนตามเกรดลูกค้า</div>
@@ -855,7 +855,7 @@ export default function App() {
 
         {tab === "admin" && isAdmin && (
           <div>
-            <div style={{ display: "flex", gap: 4, marginBottom: 18, background: "#fff", border: "1px solid #E7E5DF", borderRadius: 10, padding: 4, width: "fit-content" }}>
+            <div style={{ display: "flex", gap: 4, marginBottom: 18, background: "#fff", border: "1px solid #E7E5DF", borderRadius: 10, padding: 4, maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
               {[
                 { id: "pending", label: `รออนุมัติ (${pendingUsers.length})`, icon: Clock },
                 { id: "users", label: "จัดการผู้ใช้", icon: Users },
@@ -864,7 +864,7 @@ export default function App() {
               ].map((s) => (
                 <button key={s.id} onClick={() => setAdminSubTab(s.id)} style={{
                   border: "none", padding: "8px 14px", borderRadius: 7, cursor: "pointer", fontSize: 12.5, fontWeight: 700,
-                  display: "flex", alignItems: "center", gap: 6,
+                  display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", flexShrink: 0,
                   background: adminSubTab === s.id ? INK : "transparent", color: adminSubTab === s.id ? "#fff" : "#6B6B70",
                 }}><s.icon size={13} /> {s.label}</button>
               ))}
@@ -878,6 +878,7 @@ export default function App() {
                     <div>ไม่มีบัญชีที่รอการอนุมัติ</div>
                   </div>
                 ) : (
+                  <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead><tr style={{ background: "#FAFAF8", textAlign: "left" }}>
                       <Th>ชื่อ</Th><Th>Sales ID</Th><Th>โซน</Th><Th>วันที่สมัคร</Th><Th></Th>
@@ -903,12 +904,14 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             )}
 
             {adminSubTab === "users" && (
               <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, overflow: "hidden" }}>
+                <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead><tr style={{ background: "#FAFAF8", textAlign: "left" }}>
                     <Th>ชื่อ</Th><Th>Sales ID</Th><Th>โซน</Th><Th>สิทธิ์</Th><Th>สถานะ</Th><Th></Th>
@@ -947,6 +950,7 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
 
@@ -959,7 +963,7 @@ export default function App() {
                   <StatCard label="Grade A" value={teamStats.gradeData.find(g=>g.name==="A")?.value || 0} sub="ลูกค้าเกรดสูงสุด" icon={CheckCircle2} />
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: 14 }}>
                   <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 16 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#8A8A90", marginBottom: 8 }}>จำนวนรายการตามโซน</div>
                     <ResponsiveContainer width="100%" height={200}>
@@ -986,6 +990,7 @@ export default function App() {
 
                 <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 16 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#8A8A90", marginBottom: 8 }}>อันดับพนักงานขาย (ตามมูลค่า Pipeline)</div>
+                  <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead><tr style={{ textAlign: "left" }}><Th>#</Th><Th>พนักงานขาย</Th><Th>จำนวนดีล</Th><Th>มูลค่ารวม</Th></tr></thead>
                     <tbody>
@@ -1000,12 +1005,13 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             )}
 
             {adminSubTab === "data" && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px,1fr))", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: 14 }}>
                 <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 18 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}><FileDown size={16} color={RED} /><b style={{ fontSize: 13.5 }}>ส่งออกข้อมูล Pipeline</b></div>
                   <p style={{ fontSize: 12, color: "#8A8A90", margin: "0 0 12px" }}>ส่งออกรายการ Pipeline ทั้งหมดของทุกทีมเป็นไฟล์ CSV</p>
