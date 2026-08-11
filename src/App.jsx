@@ -92,9 +92,69 @@ const HEADER_LOOKUP = Object.entries(HEADER_ALIASES).reduce((acc, [field, aliase
   return acc;
 }, {});
 
-function excelDateToIso(v) {
-  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
-  return String(v ?? "");
+function pad2(n) { return String(n).padStart(2, "0"); }
+function isoFromDate(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function isoFromParts(y, mo, d) {
+  if (!y || !mo || !d) return "";
+  const dt = new Date(y, mo - 1, d);
+  if (isNaN(dt)) return "";
+  return isoFromDate(dt);
+}
+// Excel's serial date system: day 1 = 1900-01-01 (with Excel's well-known 1900 leap-year bug,
+// which this offset already accounts for). This is what lets us recover a real date from a
+// cell that was typed as a plain number instead of being formatted as a date.
+function excelSerialToDate(serial) {
+  const utcDays = Math.floor(serial - 25569);
+  return new Date(utcDays * 86400 * 1000);
+}
+
+// Normalizes messy visit-date input into a consistent yyyy-mm-dd string. Handles:
+//  - a real JS Date (Excel cell was formatted as a date)
+//  - a raw Excel serial number (Excel cell was NOT formatted as a date, just a plain number)
+//  - text dates in yyyy-mm-dd, yyyy/mm/dd, dd/mm/yyyy, or dd-mm-yyyy
+//  - Thai Buddhist-era years (e.g. 2569) are converted to the Gregorian year
+//  - anything unrecognized is returned as-is so no data silently disappears
+function normalizeDateValue(v) {
+  if (v === null || v === undefined || v === "") return "";
+
+  if (v instanceof Date && !isNaN(v)) return isoFromDate(v);
+
+  if (typeof v === "number") {
+    if (v > 20000 && v < 80000) {
+      const d = excelSerialToDate(v);
+      if (!isNaN(d)) return isoFromDate(d);
+    }
+    return String(v);
+  }
+
+  const s = String(v).trim();
+  if (!s) return "";
+
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) return isoFromParts(+m[1], +m[2], +m[3]);
+
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (m) {
+    let [, d, mo, y] = m.map(Number);
+    if (y < 100) y += 2000;
+    if (y > 2400) y -= 543; // Buddhist calendar -> Gregorian
+    return isoFromParts(y, mo, d);
+  }
+
+  if (/^\d{4,6}$/.test(s)) {
+    const n = Number(s);
+    if (n > 20000 && n < 80000) {
+      const d = excelSerialToDate(n);
+      if (!isNaN(d)) return isoFromDate(d);
+    }
+  }
+
+  const parsed = new Date(s);
+  if (!isNaN(parsed)) return isoFromDate(parsed);
+
+  return s; // couldn't recognize it — keep the original text rather than losing it
 }
 
 // Turns one raw row (arbitrary header names, from CSV or Excel) into our internal entry shape.
@@ -103,7 +163,7 @@ function mapRowToEntry(row) {
   Object.entries(row).forEach(([rawHeader, rawValue]) => {
     const field = HEADER_LOOKUP[normalizeHeader(rawHeader)];
     if (!field) return;
-    entry[field] = field === "visitDate" ? excelDateToIso(rawValue) : String(rawValue ?? "").trim();
+    entry[field] = field === "visitDate" ? normalizeDateValue(rawValue) : String(rawValue ?? "").trim();
   });
   return entry;
 }
