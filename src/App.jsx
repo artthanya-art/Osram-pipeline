@@ -275,6 +275,7 @@ export default function App() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
   const [toast, setToast] = useState("");
+  const [importing, setImporting] = useState(false);
 
   const [search, setSearch] = useState("");
   const [filterZone, setFilterZone] = useState("");
@@ -498,8 +499,17 @@ export default function App() {
     });
   }
 
+  function entrySignature(e) {
+    // A row "looks the same" if these key fields match — used to skip re-importing
+    // rows that are already in the system (e.g. the same file imported twice).
+    return [e.salesId, e.customerName, e.itemDescription, e.qty, e.price, e.visitDate]
+      .map((v) => String(v ?? "").trim().toLowerCase())
+      .join("|");
+  }
+
   async function handleImportFile(file) {
-    if (!file) return;
+    if (!file || importing) return; // guard against double-click while an import is already running
+    setImporting(true);
     const isExcel = /\.(xlsx|xls)$/i.test(file.name);
     const userBySalesId = new Map(users.map((u) => [u.salesId.toLowerCase(), u]));
     let unknownCount = 0;
@@ -533,15 +543,36 @@ export default function App() {
         showToast("ไม่พบแถวที่มีชื่อลูกค้า ตรวจสอบหัวคอลัมน์ในไฟล์อีกครั้ง");
         return;
       }
-      const inserted = await bulkInsertEntries(prepared);
+
+      // Skip rows that already exist (same file imported twice, or overlapping with
+      // rows entered manually) — compared against currently-loaded entries plus
+      // duplicates within this same file.
+      const existingSignatures = new Set(entries.map(entrySignature));
+      const seenInBatch = new Set();
+      let duplicateCount = 0;
+      const toInsert = prepared.filter((e) => {
+        const sig = entrySignature(e);
+        if (existingSignatures.has(sig) || seenInBatch.has(sig)) { duplicateCount++; return false; }
+        seenInBatch.add(sig);
+        return true;
+      });
+
+      if (!toInsert.length) {
+        showToast("ทุกรายการในไฟล์นี้มีอยู่ในระบบแล้ว ไม่มีการเพิ่มข้อมูลซ้ำ");
+        return;
+      }
+
+      const inserted = await bulkInsertEntries(toInsert);
       setEntries((prev) => [...inserted, ...prev]);
-      showToast(
-        unknownCount > 0
-          ? `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ (${unknownCount} รายการมีรหัสเซลที่ไม่ตรง/ไม่ได้ลงทะเบียน แสดงเป็น "Unknown")`
-          : `นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`
-      );
+
+      const parts = [`นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`];
+      if (duplicateCount > 0) parts.push(`ข้าม ${duplicateCount} รายการที่ซ้ำกับข้อมูลเดิม`);
+      if (unknownCount > 0) parts.push(`${unknownCount} รายการรหัสเซลไม่ตรง/ไม่ได้ลงทะเบียน แสดงเป็น "Unknown"`);
+      showToast(parts.join(" — "));
     } catch (err) {
       showToast("นำเข้าข้อมูลไม่สำเร็จ: " + err.message);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -1127,9 +1158,16 @@ export default function App() {
                     รองรับไฟล์ .csv, .xlsx, .xls — ใช้ได้ทั้งไฟล์ที่ Export ออกจากระบบนี้ และไฟล์ Excel pipeline
                     ต้นฉบับ (ระบบจะจับคู่หัวคอลัมน์ให้อัตโนมัติ) อ่านเฉพาะชีตแรกในไฟล์
                   </p>
-                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={(e) => handleImportFile(e.target.files?.[0])} />
-                  <button onClick={() => importFileRef.current?.click()} style={{ border: "1px solid #DEDCD6", background: "#fff", color: INK, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                    <Upload size={13} /> เลือกไฟล์ CSV / Excel
+                  <input
+                    ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; handleImportFile(f); }}
+                  />
+                  <button
+                    onClick={() => importFileRef.current?.click()}
+                    disabled={importing}
+                    style={{ border: "1px solid #DEDCD6", background: "#fff", color: INK, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: importing ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: importing ? 0.6 : 1 }}
+                  >
+                    <Upload size={13} /> {importing ? "กำลังนำเข้า..." : "เลือกไฟล์ CSV / Excel"}
                   </button>
                 </div>
 
