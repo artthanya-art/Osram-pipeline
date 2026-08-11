@@ -7,6 +7,7 @@ import {
   Crown, ChevronRight,
 } from "lucide-react";
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import {
   fetchUsers, insertUser, updateUserFields,
   fetchZones, insertZone,
@@ -48,6 +49,64 @@ const ENTRY_COLS = [
   "actionPlanMonth","progress","deliverInMonths","deliveryStartYear","deliveryStartMonth",
   "startWorkingMonth","visitDate","grade",
 ];
+
+// Maps each internal field to every column-header spelling we should recognize on import —
+// both our own CSV export headers (camelCase) and the original OSRAM Excel report headers.
+const HEADER_ALIASES = {
+  salesId: ["salesId", "sales id"],
+  salesName: ["salesName", "sales name"],
+  zone: ["zone", "โซน"],
+  customerId: ["customerId", "customer id"],
+  customerName: ["customerName", "customer name"],
+  customerType: ["customerType", "customer type"],
+  customerSegment: ["customerSegment", "customer segment"],
+  productType: ["productType", "product type"],
+  itemCode: ["itemCode", "item code", "full code"],
+  itemDescription: ["itemDescription", "item description"],
+  qty: ["qty", "quantity"],
+  uom: ["uom", "unit"],
+  price: ["price"],
+  competitorName: ["competitorName", "competitor name"],
+  competitorPrice: ["competitorPrice", "competitor price"],
+  projectCloseYear: ["projectCloseYear", "project close year"],
+  projectCloseMonth: ["projectCloseMonth", "project close month"],
+  quotationNumber: ["quotationNumber", "quotation number", "quotation no", "quotation no."],
+  deliveryMethod: ["deliveryMethod", "delivery method", "วิธีการจัดส่ง"],
+  kpiRegister: ["kpiRegister", "kpi register"],
+  actionPlanMonth: ["actionPlanMonth", "action plan (month)", "action plan"],
+  progress: ["progress", "% progresssion", "% progression", "progression"],
+  deliverInMonths: ["deliverInMonths", "90% ทยอยส่ง (กี่เดือน)", "deliver in months"],
+  deliveryStartYear: ["deliveryStartYear", "deliverly start year", "delivery start year"],
+  deliveryStartMonth: ["deliveryStartMonth", "deliverly start month", "delivery start month"],
+  startWorkingMonth: ["startWorkingMonth", "start working month"],
+  visitDate: ["visitDate", "visit date"],
+  grade: ["grade"],
+};
+
+function normalizeHeader(h) {
+  return String(h ?? "").trim().toLowerCase().replace(/[\s_\-./]+/g, "");
+}
+// normalized-alias -> internal field name, built once
+const HEADER_LOOKUP = Object.entries(HEADER_ALIASES).reduce((acc, [field, aliases]) => {
+  aliases.forEach((a) => { acc[normalizeHeader(a)] = field; });
+  return acc;
+}, {});
+
+function excelDateToIso(v) {
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+  return String(v ?? "");
+}
+
+// Turns one raw row (arbitrary header names, from CSV or Excel) into our internal entry shape.
+function mapRowToEntry(row) {
+  const entry = {};
+  Object.entries(row).forEach(([rawHeader, rawValue]) => {
+    const field = HEADER_LOOKUP[normalizeHeader(rawHeader)];
+    if (!field) return;
+    entry[field] = field === "visitDate" ? excelDateToIso(rawValue) : String(rawValue ?? "").trim();
+  });
+  return entry;
+}
 
 const EMPTY_FORM = {
   zone: "Red Zone",
@@ -414,34 +473,58 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  function handleImportCsv(file) {
+  function parseCsvFile(file) {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => resolve(results.data),
+        error: reject,
+      });
+    });
+  }
+  function parseExcelFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const workbook = XLSX.read(new Uint8Array(e.target.result), { type: "array", cellDates: true });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          resolve(XLSX.utils.sheet_to_json(sheet, { defval: "" }));
+        } catch (err) { reject(err); }
+      };
+      reader.onerror = () => reject(new Error("อ่านไฟล์ไม่สำเร็จ"));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function handleImportFile(file) {
     if (!file) return;
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        const rows = results.data;
-        if (!rows.length) { showToast("ไม่พบข้อมูลในไฟล์ CSV"); return; }
-        const prepared = rows.map((r) => {
-          const entry = {};
-          ENTRY_COLS.forEach((c) => { entry[c] = r[c] ?? ""; });
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+    try {
+      const rows = isExcel ? await parseExcelFile(file) : await parseCsvFile(file);
+      if (!rows.length) { showToast("ไม่พบข้อมูลในไฟล์"); return; }
+      const prepared = rows
+        .map((r) => {
+          const entry = mapRowToEntry(r);
           if (!entry.salesId) entry.salesId = currentUser.salesId;
-          if (!entry.salesName) entry.salesName = r.salesName || currentUser.name;
+          if (!entry.salesName) entry.salesName = currentUser.name;
           if (!entry.grade) entry.grade = "C";
           if (!entry.progress) entry.progress = "0% - ยังไม่ได้เริ่มงาน";
           if (!entry.zone) entry.zone = "Red Zone";
           return entry;
-        }).filter((e) => e.customerName);
-        try {
-          const inserted = await bulkInsertEntries(prepared);
-          setEntries((prev) => [...inserted, ...prev]);
-          showToast(`นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`);
-        } catch (err) {
-          showToast("นำเข้าข้อมูลไม่สำเร็จ: " + err.message);
-        }
-      },
-      error: () => showToast("เกิดข้อผิดพลาดในการอ่านไฟล์ CSV"),
-    });
+        })
+        .filter((e) => e.customerName);
+      if (!prepared.length) {
+        showToast("ไม่พบแถวที่มีชื่อลูกค้า ตรวจสอบหัวคอลัมน์ในไฟล์อีกครั้ง");
+        return;
+      }
+      const inserted = await bulkInsertEntries(prepared);
+      setEntries((prev) => [...inserted, ...prev]);
+      showToast(`นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`);
+    } catch (err) {
+      showToast("นำเข้าข้อมูลไม่สำเร็จ: " + err.message);
+    }
   }
 
   function handleRestoreBackup(file) {
@@ -1021,11 +1104,14 @@ export default function App() {
                 </div>
 
                 <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 18 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}><FileUp size={16} color={RED} /><b style={{ fontSize: 13.5 }}>นำเข้าข้อมูล Pipeline (CSV)</b></div>
-                  <p style={{ fontSize: 12, color: "#8A8A90", margin: "0 0 12px" }}>ไฟล์ CSV ควรมีหัวคอลัมน์ตรงกับรูปแบบที่ Export ออกจากระบบ</p>
-                  <input ref={importFileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => handleImportCsv(e.target.files?.[0])} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}><FileUp size={16} color={RED} /><b style={{ fontSize: 13.5 }}>นำเข้าข้อมูล Pipeline (CSV / Excel)</b></div>
+                  <p style={{ fontSize: 12, color: "#8A8A90", margin: "0 0 12px" }}>
+                    รองรับไฟล์ .csv, .xlsx, .xls — ใช้ได้ทั้งไฟล์ที่ Export ออกจากระบบนี้ และไฟล์ Excel pipeline
+                    ต้นฉบับ (ระบบจะจับคู่หัวคอลัมน์ให้อัตโนมัติ) อ่านเฉพาะชีตแรกในไฟล์
+                  </p>
+                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: "none" }} onChange={(e) => handleImportFile(e.target.files?.[0])} />
                   <button onClick={() => importFileRef.current?.click()} style={{ border: "1px solid #DEDCD6", background: "#fff", color: INK, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                    <Upload size={13} /> เลือกไฟล์ CSV
+                    <Upload size={13} /> เลือกไฟล์ CSV / Excel
                   </button>
                 </div>
 
