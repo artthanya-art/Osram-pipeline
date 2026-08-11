@@ -530,13 +530,6 @@ export default function App() {
           </div>
 
           <div style={{ background: "#fff", borderRadius: 16, padding: 28, boxShadow: "0 30px 60px -20px rgba(0,0,0,0.5)" }}>
-            {authMode === "login" && (
-              <div style={{ background: "#FFF6DC", border: "1px solid #FCE8A8", borderRadius: 10, padding: "10px 12px", marginBottom: 18, fontSize: 12, color: "#6B5600", lineHeight: 1.7 }}>
-                <b>บัญชีทดลองใช้งาน</b><br />
-                ผู้ดูแลระบบ: <code>admin</code> / <code>admin123</code><br />
-                พนักงานขาย: <code>demo</code> / <code>demo123</code>
-              </div>
-            )}
             <div style={{ display: "flex", gap: 6, marginBottom: 20, background: "#F1F0EC", borderRadius: 10, padding: 4 }}>
               <button onClick={() => { setAuthMode("login"); setAuthError(""); setAuthNotice(""); }} style={{
                 flex: 1, padding: "9px 0", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
