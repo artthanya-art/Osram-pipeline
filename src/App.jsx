@@ -415,7 +415,8 @@ export default function App() {
             setAuthNotice("สมัครสมาชิกสำเร็จ กรุณารอผู้ดูแลระบบอนุมัติบัญชีก่อนเข้าสู่ระบบ");
           }
         } catch (err) {
-          setAuthError("สมัครสมาชิกไม่สำเร็จ: " + err.message);
+          const isDuplicate = err.code === "23505" || /duplicate key|already exists/i.test(err.message || "");
+          setAuthError(isDuplicate ? "Sales ID นี้เพิ่งถูกใช้ไปหมาดๆ กรุณาเลือก Sales ID อื่น" : "สมัครสมาชิกไม่สำเร็จ: " + err.message);
         }
       })();
     } else {
@@ -622,15 +623,34 @@ export default function App() {
         return;
       }
 
-      const inserted = await bulkInsertEntries(toInsert);
-      setEntries((prev) => [...inserted, ...prev]);
+      // Insert one row at a time (not one big batch) so a problem in a single row
+      // — e.g. an unrecognized sales code hitting a leftover DB constraint — only
+      // fails that row instead of rejecting the entire file.
+      const settled = await Promise.allSettled(toInsert.map((e) => insertEntry(e)));
+      const succeeded = [];
+      const failures = [];
+      settled.forEach((r, i) => {
+        if (r.status === "fulfilled") succeeded.push(r.value);
+        else failures.push({ entry: toInsert[i], message: r.reason?.message || "ไม่ทราบสาเหตุ" });
+      });
+      if (succeeded.length) setEntries((prev) => [...succeeded, ...prev]);
 
-      const parts = [`นำเข้าข้อมูลสำเร็จ ${inserted.length} รายการ`];
+      const parts = [];
+      if (succeeded.length) parts.push(`นำเข้าสำเร็จ ${succeeded.length} รายการ`);
+      if (failures.length) {
+        const sample = failures[0];
+        parts.push(`ล้มเหลว ${failures.length} รายการ (เช่น ${sample.entry.customerName || sample.entry.salesId}: ${sample.message})`);
+      }
       if (duplicateCount > 0) parts.push(`ข้าม ${duplicateCount} รายการที่ซ้ำกับข้อมูลเดิม`);
       if (unknownCount > 0) parts.push(`${unknownCount} รายการรหัสเซลไม่ตรง/ไม่ได้ลงทะเบียน แสดงเป็น "Unknown"`);
-      showToast(parts.join(" — "));
+      showToast(parts.join(" — ") || "ไม่มีข้อมูลที่นำเข้าได้");
     } catch (err) {
-      showToast("นำเข้าข้อมูลไม่สำเร็จ: " + err.message);
+      const isFkViolation = err.code === "23503" || /foreign key constraint/i.test(err.message || "");
+      showToast(
+        isFkViolation
+          ? 'นำเข้าไม่สำเร็จ: ฐานข้อมูลยังบังคับว่า Sales ID ต้องลงทะเบียนไว้ก่อน กรุณารัน "alter table pipeline_entries drop constraint if exists pipeline_entries_sales_id_fkey;" ใน Supabase SQL Editor ก่อน แล้วลองใหม่'
+          : "นำเข้าข้อมูลไม่สำเร็จ: " + err.message
+      );
     } finally {
       setImporting(false);
     }
