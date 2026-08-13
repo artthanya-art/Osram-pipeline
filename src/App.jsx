@@ -129,13 +129,15 @@ function normalizeDateValue(v) {
     return String(v);
   }
 
-  const s = String(v).trim();
-  if (!s) return "";
+  const raw = String(v).trim();
+  if (!raw) return "";
+  // Strip a time-of-day portion if present (e.g. "2026-08-11 00:00:00" or "2026-08-11T00:00:00Z")
+  const s = raw.split(/[T ]/)[0].replace(/\s+/g, "");
 
-  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (m) return isoFromParts(+m[1], +m[2], +m[3]);
 
-  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
   if (m) {
     let [, d, mo, y] = m.map(Number);
     if (y < 100) y += 2000;
@@ -151,7 +153,39 @@ function normalizeDateValue(v) {
     }
   }
 
-  const parsed = new Date(s);
+  // Compact digit-only dates with no separators at all, e.g. "240569" (ddmmyy, Thai Buddhist
+  // short year) or "11082026" (ddmmyyyy). Only accepted when the day/month split is
+  // unambiguously a valid date — if it isn't, we leave the value alone rather than guess wrong.
+  if (/^\d{6}$/.test(s)) {
+    const d = +s.slice(0, 2), mo = +s.slice(2, 4), yy = +s.slice(4, 6);
+    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) {
+      let y = 2500 + yy - 543; // Thai short Buddhist year is the common convention
+      if (y < 1990 || y > 2100) y = 2000 + yy; // fall back to a plain 2000s Gregorian year
+      const guess = isoFromParts(y, mo, d);
+      if (guess) return guess;
+    }
+  }
+  if (/^\d{8}$/.test(s)) {
+    let y = +s.slice(0, 4), mo = +s.slice(4, 6), d = +s.slice(6, 8);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      if (y > 2400) y -= 543;
+      const guess = isoFromParts(y, mo, d);
+      if (guess) return guess;
+    }
+    d = +s.slice(0, 2); mo = +s.slice(2, 4); y = +s.slice(4, 8);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      if (y > 2400) y -= 543;
+      const guess = isoFromParts(y, mo, d);
+      if (guess) return guess;
+    }
+  }
+
+  // Don't hand a bare, still-unrecognized number to `new Date()` — JS will happily (and
+  // wrongly) interpret a string like "244505" as the literal year 244505. Only fall through
+  // to free-form date parsing for strings that aren't purely digits (e.g. "Aug 11, 2026").
+  if (/^\d+$/.test(s)) return raw;
+
+  const parsed = new Date(raw);
   if (!isNaN(parsed)) return isoFromDate(parsed);
 
   return s; // couldn't recognize it — keep the original text rather than losing it
@@ -505,6 +539,34 @@ export default function App() {
       setUsers((prev) => prev.map((u) => (u.salesId === salesId ? { ...u, password: newPw.trim() } : u)));
       showToast(`ตั้งรหัสผ่านใหม่ให้ ${salesId} แล้ว แจ้งพนักงานให้ทราบรหัสใหม่`);
     } catch (err) { showToast("รีเซ็ตรหัสผ่านไม่สำเร็จ: " + err.message); }
+  }
+
+  // One-time cleanup for data that was already imported before the date parser existed
+  // (or came in with inconsistent formats) — re-normalizes every existing row's Visit Date.
+  async function cleanUpVisitDates() {
+    const candidates = entries.filter((en) => en.visitDate && normalizeDateValue(en.visitDate) !== en.visitDate);
+    if (!candidates.length) { showToast("รูปแบบวันที่ของข้อมูลทั้งหมดเป็นมาตรฐานอยู่แล้ว"); return; }
+    if (!window.confirm(`พบ ${candidates.length} รายการที่รูปแบบวันที่ยังไม่เป็นมาตรฐาน ต้องการปรับให้เป็น yyyy-mm-dd ทั้งหมดหรือไม่?`)) return;
+
+    setImporting(true); // reuse the same "busy" state to disable other import actions meanwhile
+    let fixed = 0;
+    const failedSamples = [];
+    for (const en of candidates) {
+      const newDate = normalizeDateValue(en.visitDate);
+      try {
+        await updateEntryDb(en.id, { ...en, visitDate: newDate });
+        setEntries((prev) => prev.map((x) => (x.id === en.id ? { ...x, visitDate: newDate } : x)));
+        fixed++;
+      } catch (err) {
+        if (failedSamples.length < 1) failedSamples.push(err.message);
+      }
+    }
+    setImporting(false);
+    showToast(
+      failedSamples.length
+        ? `ปรับรูปแบบวันที่แล้ว ${fixed} รายการ, ล้มเหลว ${candidates.length - fixed} รายการ (${failedSamples[0]})`
+        : `ปรับรูปแบบวันที่ให้เป็นมาตรฐานแล้ว ${fixed} รายการ`
+    );
   }
 
   // ---------- import / export ----------
@@ -1047,7 +1109,13 @@ export default function App() {
                           </div>
                         </Td>
                         <Td><span style={{ display: "inline-flex", width: 22, height: 22, borderRadius: 999, alignItems: "center", justifyContent: "center", background: gradeColor(en.grade) + "22", color: gradeColor(en.grade), fontWeight: 800, fontSize: 11 }}>{en.grade}</span></Td>
-                        <Td>{en.visitDate || "-"}</Td>
+                        <Td>
+                          {en.visitDate && !/^\d{4}-\d{2}-\d{2}$/.test(en.visitDate) ? (
+                            <span title="รูปแบบวันที่ไม่เป็นมาตรฐาน กรุณาตรวจสอบ/แก้ไขด้วยตนเอง" style={{ color: RED, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <AlertCircle size={12} /> {en.visitDate}
+                            </span>
+                          ) : (en.visitDate || "-")}
+                        </Td>
                         <Td>
                           {(tab === "mine" || en.salesId === currentUser.salesId || isAdmin) && (
                             <div style={{ display: "flex", gap: 6 }}>
@@ -1271,6 +1339,17 @@ export default function App() {
                       <Upload size={13} /> กู้คืนจากไฟล์สำรอง
                     </button>
                   </div>
+                </div>
+
+                <div style={{ background: "#fff", border: "1px solid #E7E5DF", borderRadius: 14, padding: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}><Clock size={16} color={RED} /><b style={{ fontSize: 13.5 }}>ปรับรูปแบบวันที่ให้เป็นมาตรฐาน</b></div>
+                  <p style={{ fontSize: 12, color: "#8A8A90", margin: "0 0 12px" }}>
+                    สำหรับข้อมูลที่ import เข้ามาก่อนหน้านี้แล้วมีรูปแบบวันที่ไม่ตรงกัน — ตรวจสอบและแปลง
+                    "วันที่เยี่ยมลูกค้า" ของทุกรายการที่มีอยู่แล้วในระบบให้เป็นรูปแบบ yyyy-mm-dd เหมือนกันหมด
+                  </p>
+                  <button onClick={cleanUpVisitDates} disabled={importing} style={{ border: "1px solid #DEDCD6", background: "#fff", color: INK, borderRadius: 8, padding: "9px 14px", fontSize: 12.5, fontWeight: 700, cursor: importing ? "not-allowed" : "pointer", opacity: importing ? 0.6 : 1, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Clock size={13} /> {importing ? "กำลังดำเนินการ..." : "ปรับรูปแบบวันที่ทั้งหมด"}
+                  </button>
                 </div>
               </div>
             )}
